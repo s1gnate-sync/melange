@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -37,6 +38,8 @@ import (
 
 	"chainguard.dev/melange/pkg/util"
 )
+
+var configData []byte
 
 type Trigger struct {
 	// Optional: The script to run
@@ -1039,35 +1042,50 @@ func ParseConfiguration(ctx context.Context, configurationFilePath string, opts 
 		return nil, errors.New("no configuration file path provided")
 	}
 
-	f, err := options.filesystem.Open(configurationFilePath)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
 	root := yaml.Node{}
-
 	cfg := Configuration{root: &root}
 
-	// Unmarshal into a node first
-	decoderNode := yaml.NewDecoder(f)
-	err = decoderNode.Decode(&root)
-	if err != nil {
-		return nil, fmt.Errorf("unable to decode configuration file %q: %w", configurationFilePath, err)
+	unmarshal := func(f io.Reader) error {
+
+		decoderNode := yaml.NewDecoder(f)
+		err := decoderNode.Decode(&root)
+		if err != nil {
+			return err
+		}
+
+		data, err := yaml.Marshal(&root)
+		if err != nil {
+			return err
+		}
+
+		reader := bytes.NewReader(data)
+		decoder := yaml.NewDecoder(reader)
+		decoder.KnownFields(true)
+		if err := decoder.Decode(&cfg); err != nil {
+			return err
+		}
+
+		return nil
 	}
 
-	// XXX(Elizafox) - Node.Decode doesn't allow setting of KnownFields, so we do this cheesy hack below
-	data, err := yaml.Marshal(&root)
-	if err != nil {
-		return nil, fmt.Errorf("unable to decode configuration file %q: %w", configurationFilePath, err)
+	var err error
+	if configurationFilePath == "-" {
+		if configData == nil {
+			configData, _ = io.ReadAll(os.Stdin)
+		}
+
+		err = unmarshal(bytes.NewBuffer(configData))
+	} else {
+		f, err := options.filesystem.Open(configurationFilePath)
+		if err != nil {
+			return nil, err
+		}
+		defer f.Close()
+		err = unmarshal(f)
 	}
 
-	// Now unmarshal it into the struct, part of said cheesy hack
-	reader := bytes.NewReader(data)
-	decoder := yaml.NewDecoder(reader)
-	decoder.KnownFields(true)
-	if err := decoder.Decode(&cfg); err != nil {
-		return nil, fmt.Errorf("unable to decode configuration file %q: %w", configurationFilePath, err)
+	if err != nil {
+		return nil, fmt.Errorf("decode file error %q: %w", configurationFilePath, err)
 	}
 
 	// If a variables file was defined, merge it into the variables block.

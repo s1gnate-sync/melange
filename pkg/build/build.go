@@ -152,6 +152,11 @@ func New(ctx context.Context, opts ...Option) (*Build, error) {
 	// we check if .melange.yaml or melange.yaml exist.
 	checks := []string{".melange.yaml", ".melange.yml", "melange.yaml", "melange.yml"}
 	if b.ConfigFile == "" {
+
+		  if fi, err := os.Stdin.Stat(); err == nil && fi.Mode() & os.ModeNamedPipe != 0 {
+				b.ConfigFile = "-"
+		  }
+	
 		for _, chk := range checks {
 			if _, err := os.Stat(chk); err == nil {
 				log.Infof("no configuration file provided -- using %s", chk)
